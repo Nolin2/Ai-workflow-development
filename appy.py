@@ -1,131 +1,118 @@
+# app.py (Step 1: Model Loading and Preprocessing)
+
 import streamlit as st
 import pandas as pd
-import joblib
 import numpy as np
-from sklearn.preprocessing import StandardScaler
+import joblib 
+import plotly.express as px
 
-# --- 1. Configuration and Asset Loading ---
+# --- Configuration & Setup ---
+st.set_page_config(
+    page_title="Seller Churn Reviewer",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Define the paths for the saved artifacts (MUST match the paths in your training script)
-MODEL_PATH = 'models/churn_predictor.pkl'
-SCALER_PATH = 'models/scaler.pkl' 
-
-# Define the exact order of features used in training (CRITICAL!)
-FEATURE_COLS = ['Age', 'Gender', 'Monthly_Spending', 'Subscription_Length', 'Support_Interactions']
+# --- 1. Load Model and Artifacts ---
 
 @st.cache_resource
-def load_assets():
-    """Loads the trained model and fitted scaler, using caching for performance."""
+def load_model_artifacts():
+    """Loads the ML model and feature list, caching them for performance."""
     try:
-        model = joblib.load(MODEL_PATH)
-        scaler = joblib.load(SCALER_PATH)
-        return model, scaler
+        # NOTE: Update file names if yours are different
+        model = joblib.load('churn_model.pkl') 
+        feature_columns = joblib.load('feature_columns.pkl')
+        st.success("Machine learning model loaded successfully.")
+        return model, feature_columns
     except FileNotFoundError:
-        # This error message is visible on the main page if files are missing
-        st.error("🚨 ERROR: Model or Scaler not found.")
-        st.warning("Please run your training script (`full_churn_workflow.py`) first to generate the necessary files in the 'models/' folder.")
-        return None, None
+        st.error("Error: Required model files (churn_model.pkl or feature_columns.pkl) not found. Please place them in the app directory.")
+        return None, []
 
-# Load the essential components
-model, scaler = load_assets()
+model, feature_columns = load_model_artifacts()
 
-# --- 2. Streamlit Application Layout ---
+# --- 2. Utility Functions ---
 
-st.set_page_config(page_title="Customer Churn Risk Predictor", layout="centered")
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame | None:
+    """
+    Applies necessary transformations (encoding, column alignment) to the input data.
+    
+    NOTE: This logic MUST mirror the steps used during model training!
+    This example uses common Telecom Churn features for demonstration.
+    """
+    if not feature_columns:
+        return None
+    
+    df_processed = df.copy()
 
-st.title("💡 Customer Churn Risk Predictor")
-st.markdown("### Interactive Deployment Interface for Retention Team")
+    # --- A. Handle Categorical Features (One-Hot Encoding) ---
+    # Common categorical features in Churn prediction:
+    categorical_cols = ['Contract', 'PaymentMethod', 'Gender', 'MultipleLines', 'InternetService']
 
-# Only render the UI if the assets loaded successfully
-if model is not None and scaler is not None:
-    
-    # ====================================================================
-    # USER INTERFACE: SIDEBAR INPUTS
-    # ====================================================================
-    st.sidebar.header("📊 Customer Profile Input")
-    st.sidebar.markdown("Adjust the variables below to simulate a customer's risk profile.")
-    
-    # 1. Age (Slider)
-    age = st.sidebar.slider("1. Age (Years)", 18, 75, 45, help="Customer's current age.")
-    
-    # 2. Gender (Radio Button)
-    gender_map = st.sidebar.radio(
-        "2. Gender", 
-        options=[("Male", 0), ("Female", 1)], 
-        format_func=lambda x: x[0] # Display 'Male'/'Female', but use 0/1 for prediction
-    )[1]
-    
-    # 3. Monthly Spending (Number Input)
-    monthly_spending = st.sidebar.number_input("3. Monthly Spending ($)", 10.0, 500.0, 250.0, step=5.0, help="Average monthly dollar value.")
-    
-    # 4. Subscription Length (Slider)
-    subscription_length = st.sidebar.slider("4. Subscription Length (Months)", 1, 12, 6, help="How long the customer has been subscribed.")
-    
-    # 5. Support Interactions (Slider)
-    support_interactions = st.sidebar.slider("5. Support Interactions (Last 6 Months)", 0, 5, 2, help="High interactions may indicate frustration.")
-    
-    st.sidebar.info("Prediction updates instantly as you adjust the inputs.")
-    
-    # ====================================================================
-    # PREDICTION LOGIC
-    # ====================================================================
-
-    # Collect inputs into a DataFrame row (Maintains order)
-    input_data = pd.DataFrame({
-        'Age': [age],
-        'Gender': [gender_map],
-        'Monthly_Spending': [monthly_spending],
-        'Subscription_Length': [subscription_length],
-        'Support_Interactions': [support_interactions]
-    })
-    
-    # Scale the input data using the *SAVED* fitted scaler
-    input_scaled_values = scaler.transform(input_data[FEATURE_COLS])
-    
-    # Make prediction
-    # model.predict_proba returns probability for [Class 0, Class 1]
-    prediction_proba = model.predict_proba(input_scaled_values)[0]
-    churn_proba = prediction_proba[1] # Probability of Churn (Class 1)
-
-    # ====================================================================
-    # MAIN PAGE OUTPUTS
-    # ====================================================================
-    st.write("---")
-    st.subheader("🎯 Real-time Churn Risk Score")
-
-    # Define risk levels for clear visualization
-    if churn_proba >= 0.70:
-        risk_level = "High Risk - IMMEDIATE ACTION REQUIRED"
-        color = "red"
-        icon = "🛑"
-    elif churn_proba >= 0.40:
-        risk_level = "Medium Risk - Proactive Offer Recommended"
-        color = "orange"
-        icon = "⚠️"
-    else:
-        risk_level = "Low Risk - Stable Customer"
-        color = "green"
-        icon = "✅"
-    
-    # Display the final prediction
-    st.metric(
-        label="Predicted Churn Probability", 
-        value=f"{churn_proba:.2%}", # Display as percentage
-        delta=f"Risk Level: {risk_level}",
-        delta_color=color
-    )
-
-    st.markdown(f"**Retention Strategy:** {icon} <span style='color:{color}; font-weight:bold;'>{risk_level}</span>", unsafe_allow_html=True)
-    
-    # --- Actionable Insights ---
-    st.write("---")
-    st.subheader("🧠 Model Interpretation (Why This Prediction?)")
-    
-    # Provide simple, rule-based insights based on the input values
-    if support_interactions >= 3:
-        st.error("High risk factors detected: **Frequent Support Interactions**. Suggests high frustration or unresolved issues.")
-    elif monthly_spending < 150:
-        st.warning("Medium risk factor: **Low Monthly Spending**. Indicates low perceived value or light usage of the service.")
-    else:
-        st.success("Positive indicators: High spending and low interactions suggest a high-value, stable customer.")
+    # Convert object/string columns to category type first
+    for col in categorical_cols:
+        if col in df_processed.columns:
+            df_processed[col] = df_processed[col].astype('category')
         
+    # Apply One-Hot Encoding
+    df_processed = pd.get_dummies(df_processed, columns=categorical_cols, drop_first=True)
+
+    # --- B. Handle Numerical Features (e.g., Coercing TotalCharges) ---
+    # TotalCharges often comes in as an object/string due to blanks/spaces
+    if 'TotalCharges' in df_processed.columns:
+        df_processed['TotalCharges'] = pd.to_numeric(df_processed['TotalCharges'], errors='coerce')
+        # Simple imputation for any resulting NaNs (e.g., fill with mean or 0)
+        df_processed['TotalCharges'] = df_processed['TotalCharges'].fillna(0)
+    
+    # --- C. Align Columns with the Trained Model ---
+    # This is the most crucial step! It ensures the new data has the same columns 
+    # in the same order as the training data, padding missing columns with 0.
+    
+    # Create a DataFrame with all expected feature columns, initially filled with 0
+    final_df = pd.DataFrame(0, index=df_processed.index, columns=feature_columns)
+    
+    # Copy the values from the processed input data where columns match
+    available_cols = list(set(df_processed.columns) & set(feature_columns))
+    final_df[available_cols] = df_processed[available_cols]
+
+    return final_df
+
+def predict_churn(df_original: pd.DataFrame) -> pd.DataFrame | None:
+    """Makes predictions and adds results to the original DataFrame."""
+    if model is None or df_original.empty:
+        return None
+
+    # 1. Preprocess the uploaded data
+    X = preprocess_data(df_original.copy())
+    if X is None or X.empty:
+        st.error("Preprocessing failed or resulted in empty data.")
+        return None
+
+    # 2. Make predictions
+    try:
+        probabilities = model.predict_proba(X)[:, 1] # Probability of Churn (class 1)
+        predictions = model.predict(X) # Hard Churn prediction (0 or 1)
+    except Exception as e:
+        st.error(f"Prediction failed. Check that your model features ({len(feature_columns)} expected) match the processed input: {e}")
+        return None
+
+    # 3. Combine results with original data
+    results_df = df_original.copy()
+    results_df['Churn_Probability'] = probabilities.round(3)
+    results_df['Churn_Prediction'] = np.where(predictions == 1, 'Yes', 'No')
+
+    # 4. Determine Seller Action Priority
+    def assign_priority(prob):
+        if prob > 0.75:
+            return '🚨 High'
+        elif prob > 0.5:
+            return '⚠️ Medium'
+        else:
+            return '🟢 Low'
+
+    results_df['Retention_Priority'] = results_df['Churn_Probability'].apply(assign_priority)
+
+    return results_df.sort_values(by='Churn_Probability', ascending=False)
+    
+# Placeholder for the Streamlit UI layout (will be developed in Step 2)
+# st.title("🎯 Seller's Customer Churn Prediction Reviewer")
+# # ... (rest of the UI code)
